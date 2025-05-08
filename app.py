@@ -1,17 +1,15 @@
 import streamlit as st
-from bs4 import BeautifulSoup
 import pandas as pd
-import io
+from bs4 import BeautifulSoup
+import re
+import datetime
 
-st.set_page_config(page_title="ダイヤ改正・運賃改定 抽出ツール", layout="wide")
+st.title("改定情報抽出アプリ")
 
-st.title("ダイヤ改正・運賃改定情報 抽出ツール")
-uploaded_file = st.file_uploader("HTMLファイルをアップロードしてください", type="html")
+uploaded_file = st.file_uploader("HTMLファイルをアップロードしてください", type=["html"])
 
-if uploaded_file:
-    html_content = uploaded_file.read().decode("utf-8")
-    soup = BeautifulSoup(html_content, 'html.parser')
-
+if uploaded_file is not None:
+    soup = BeautifulSoup(uploaded_file.read(), 'html.parser')
     data = []
     current_company = None
 
@@ -20,34 +18,47 @@ if uploaded_file:
             current_company = tag.text.strip()
         elif tag.name == 'ul':
             for li in tag.select('li.revision'):
-                # パターン2: <p class="revision__link"> で交通機関が指定されている場合
-                link = li.select_one('.revision__link')
-                company = link.text.strip() if link else current_company
-
+                if not current_company:
+                    continue
                 rev_type = li.select_one('.revision__type')
                 rev_msg = li.select_one('.revision__message')
                 rev_status = li.select_one('.revision__status')
+                line_name_tag = li.select_one('p.revision__link')
 
                 if rev_type and rev_msg and rev_status:
-                    data.append([
-                        company,
-                        rev_type.text.strip(),
-                        rev_msg.text.strip().replace('\n', ''),
-                        rev_status.text.strip()
-                    ])
+                    line_name = line_name_tag.text.strip() if line_name_tag else current_company
+                    content = rev_type.text.strip()
+                    message = rev_msg.text.strip().replace('\n', '')
+                    status = rev_status.text.strip()
+                    data.append([line_name, content, message, status])
 
-    if data:
-        df = pd.DataFrame(data, columns=["交通機関", "内容", "改定メッセージ", "対応状況"])
-        st.success(f"{len(df)} 件のデータを抽出しました。")
-        st.dataframe(df)
+    df = pd.DataFrame(data, columns=['交通機関', '内容', '改定メッセージ', '対応状況'])
 
-        csv_buffer = io.StringIO()
-        df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
-        st.download_button(
-            label="CSVをダウンロード",
-            data=csv_buffer.getvalue(),
-            file_name="revision_data.csv",
-            mime="text/csv"
-        )
-    else:
-        st.warning("データが抽出できませんでした。HTMLの構造をご確認ください。")
+    # 日付抽出関数
+    def extract_date(text):
+        match = re.search(r'(\d{4})[年/]?(\d{1,2})[月/]?(\d{1,2})?', text)
+        if match:
+            y, m, d = match.groups()
+            try:
+                return datetime.date(int(y), int(m), int(d) if d else 1)
+            except:
+                return None
+        return None
+
+    # 対象のフィルタ処理
+    df_filtered = df[(df['対応状況'] == '対応済') & (df['内容'] == '運賃改定')].copy()
+    df_filtered['日付'] = df_filtered['改定メッセージ'].apply(extract_date)
+
+    latest_df = df_filtered.sort_values('日付', ascending=False).drop_duplicates(subset=['交通機関', '内容'])
+    latest_df = latest_df[['交通機関', '内容', '改定メッセージ', '日付', '対応状況']]
+
+    st.subheader("抽出結果（対応済かつ運賃改定・最新日付のみ）")
+    st.dataframe(latest_df)
+
+    csv = latest_df.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="CSVをダウンロード",
+        data=csv,
+        file_name='filtered_revision_info.csv',
+        mime='text/csv'
+    )
