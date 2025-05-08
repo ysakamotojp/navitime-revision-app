@@ -6,7 +6,7 @@ import datetime
 
 st.title("改定情報抽出アプリ")
 
-uploaded_file = st.file_uploader("HTMLファイルをアップロードしてください", type=["html"])
+uploaded_file = st.file_uploader("HTMLファイルをアップロードしてください2", type=["html"])
 
 if uploaded_file is not None:
     soup = BeautifulSoup(uploaded_file.read(), 'html.parser')
